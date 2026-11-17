@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECDH secure chat</title>
+<style>
+:root{--bg:#eef1f5;--ink:#14213d;--mute:#5b6577;--line:#d3d9e3;--card:#fff;--acc:#2b59c3;--ok:#1f7a4d;--bad:#b3261e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+header{padding:14px 20px;background:var(--ink);color:#fff;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+header h1{font-size:18px;margin:0;font-weight:600;margin-right:auto}
+header input{padding:7px 10px;border-radius:6px;border:0;width:130px}
+button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:8px 14px;font:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default} button.alt{background:#fff;color:var(--ink);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible{outline:3px solid #8fb0ff;outline-offset:1px}
+main{display:grid;grid-template-columns:minmax(280px,380px) 1fr;gap:16px;padding:16px;max-width:1100px;margin:auto}
+@media(max-width:760px){main{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+h2{font-size:16px;margin:0 0 10px}
+.step{border-left:4px solid var(--line);padding:2px 0 2px 10px;margin:0 0 12px;color:var(--mute)}
+.step.done{border-color:var(--ok);color:var(--ink)}
+.step b{display:block}
+code,.mono{font:12px/1.4 Consolas,"Courier New",monospace;word-break:break-all;color:var(--mute)}
+#chatbox{display:flex;flex-direction:column;height:70vh;min-height:360px}
+#log{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:4px}
+.msg{max-width:80%;padding:8px 12px;border-radius:10px;background:#e7ecf6;align-self:flex-start}
+.msg.me{background:var(--acc);color:#fff;align-self:flex-end}.msg.me .mono{color:#cfdcff}
+.msg.bad{background:#fde8e6;color:var(--bad)}
+.msg small{display:block;opacity:.8}
+.sys{align-self:center;color:var(--mute);font-size:13px}
+form{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}form input{min-width:160px}form input{flex:1;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font:inherit}
+#emo{display:none;flex-wrap:wrap;gap:4px;margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px}#emo.open{display:flex}
+#emo button{background:#fff;border:1px solid var(--line);font-size:20px;padding:2px 8px}#tog{font-size:18px;padding:5px 12px}
+</style></head>
+<body>
+<header>
+  <h1>ECDH secure chat (P-256 + AES-GCM)</h1>
+  <label>Room <input id="room" value="lab"></label>
+  <button id="go">Connect</button>
+</header>
+<main>
+  <section>
+    <h2>Key exchange (you are <span id="me"></span>)</h2>
+    <div class="step" id="s1"><b>1. Generate your ECDH key pair</b>Private key stays in this tab. <code id="pub"></code></div>
+    <div class="step" id="s2"><b>2. Receive the other peer's public key</b><code id="peerpub"></code></div>
+    <div class="step" id="s3"><b>3. Derive the shared AES-256 key</b>Both tabs must show the same value (lab demo only, never display real keys).<code id="shared"></code></div>
+    <div class="mono" id="fp"></div>
+  </section>
+  <section id="chatbox">
+    <h2>Encrypted chat</h2>
+    <div id="log"><div class="sys">Click Connect in two browser tabs using the same room name.</div></div>
+    <div id="emo"></div>
+    <form id="f">
+      <button id="tog" type="button" class="alt" aria-label="Pick an emoji" disabled>😊</button>
+      <input id="txt" placeholder="Type a message" autocomplete="off" disabled>
+      <button id="send" disabled>Send</button>
+      <button id="bad" type="button" class="alt" disabled title="Flips one ciphertext bit to show AES-GCM authentication">Send tampered message</button>
+    </form>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const b64 = b => btoa(String.fromCharCode(...new Uint8Array(b)));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+const me = 'Peer-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+let kp, myPub, aesKey, es, room;
+$('#me').textContent = me;
+
+function sys(t) { const d = document.createElement('div'); d.className = 'sys'; d.textContent = t; $('#log').append(d); d.scrollIntoView(); }
+function bubble(who, text, mine, m, bad) {
+  const d = document.createElement('div'); d.className = 'msg' + (mine ? ' me' : '') + (bad ? ' bad' : '');
+  const s = document.createElement('small'); s.textContent = who + ', ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const t = document.createElement('div'); t.textContent = text;
+  const w = document.createElement('div'); w.className = 'mono'; w.textContent = `on the wire: iv=${m.iv} ct=${m.ct.slice(0, 44)}...`;
+  d.append(s, t, w); $('#log').append(d); d.scrollIntoView();
+}
+const send = m => fetch(`/send?room=${encodeURIComponent(room)}&id=${me}`, { method: 'POST', body: JSON.stringify(m) });
+const ready = on => ['#txt', '#send', '#bad', '#tog'].forEach(s => $(s).disabled = !on);
+
+async function connect() {
+  room = $('#room').value.trim() || 'lab'; $('#go').disabled = true; $('#room').disabled = true;
+  kp = await crypto.subtle.generateKey(ECDH, true, ['deriveKey']);               // step 1
+  myPub = b64(await crypto.subtle.exportKey('raw', kp.publicKey));
+  $('#pub').textContent = myPub; $('#s1').classList.add('done');
+  es = new EventSource(`/events?room=${encodeURIComponent(room)}&id=${me}`);
+  es.onopen = () => { sys(`Connected to room "${room}". Waiting for the other peer...`); send({ type: 'hello', pub: myPub }); };
+  es.onmessage = e => handle(JSON.parse(e.data));
+  es.onerror = () => { if (es.readyState === 2) { sys('Cannot join: room is full (2 peers max) or the server is down.'); $('#go').disabled = false; $('#room').disabled = false; } };
+}
+
+async function handle(m) {
+  if (m.type === 'leave') { aesKey = null; ready(false); ['#s2', '#s3'].forEach(s => $(s).classList.remove('done')); sys('Peer left. Key discarded.'); return; }
+  if (m.type === 'hello' || m.type === 'pub') {
+    $('#peerpub').textContent = m.pub; $('#s2').classList.add('done');            // step 2
+    const peerKey = await crypto.subtle.importKey('raw', unb64(m.pub), ECDH, true, []);
+    aesKey = await crypto.subtle.deriveKey({ name: 'ECDH', public: peerKey }, kp.privateKey,
+      { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);              // step 3
+    const raw = await crypto.subtle.exportKey('raw', aesKey);
+    $('#shared').textContent = hex(raw); $('#s3').classList.add('done');
+    $('#fp').textContent = 'Key fingerprint (SHA-256): ' + hex(await crypto.subtle.digest('SHA-256', raw)).slice(0, 16);
+    if (m.type === 'hello') send({ type: 'pub', pub: myPub });
+    ready(true); sys('Shared key derived. Messages are now end-to-end encrypted.'); return;
+  }
+  if (m.type === 'msg' && aesKey) {
+    try {
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(m.iv) }, aesKey, unb64(m.ct));
+      bubble(m.from, new TextDecoder().decode(pt), false, m);
+    } catch { bubble(m.from, 'Rejected: AES-GCM authentication failed (message was modified).', false, m, true); }
+  }
+}
+
+async function post(tamper) {
+  const text = $('#txt').value.trim(); if (!text || !aesKey) return; $('#txt').value = '';
+  const iv = crypto.getRandomValues(new Uint8Array(12));                          // fresh 96-bit nonce per message
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, new TextEncoder().encode(text)));
+  if (tamper) ct[0] ^= 1;                                                         // simulate an attacker flipping a bit
+  const m = { type: 'msg', from: me, iv: b64(iv), ct: b64(ct) };
+  send(m); bubble(me + (tamper ? ' (tampered copy sent)' : ''), text, true, m);
+}
+const EMOJIS = ['😀','😂','😍','😎','🤔','👍','🙏','🎉','🔥','❤️','😢','😮','🔒','🔑','🛡️','✅'];
+EMOJIS.forEach(em => {
+  const b = document.createElement('button'); b.type = 'button'; b.textContent = em; b.setAttribute('aria-label', 'Insert ' + em);
+  b.onclick = () => { const t = $('#txt'); t.setRangeText(em, t.selectionStart, t.selectionEnd, 'end'); t.focus(); };
+  $('#emo').append(b);
+});
+$('#tog').onclick = () => $('#emo').classList.toggle('open');
+$('#go').onclick = connect;
+$('#f').onsubmit = e => { e.preventDefault(); post(false); };
+$('#bad').onclick = () => post(true);
+</script>
+</body></html>

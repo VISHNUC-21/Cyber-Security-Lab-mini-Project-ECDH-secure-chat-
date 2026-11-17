@@ -1,0 +1,1 @@
+{ "name": "ecdh-secure-chat", "version": "1.0.0", "description": "ECDH + AES-GCM secure chat using the Web Crypto API", "scripts": { "start": "node server.js" }, "license": "MIT" }
