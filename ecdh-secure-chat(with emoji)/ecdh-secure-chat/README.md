@@ -4,13 +4,15 @@ Networking & Cyber Security lab - Exp 2: Diffie-Hellman Key Exchange.
 Two browser tabs (peers) generate ECDH (P-256) key pairs, swap public keys through a relay
 server, derive the same AES-256-GCM key independently, and chat with encrypted messages.
 
-## Run
+## Run with Node.js
 1. Install Node.js 16+ (https://nodejs.org). No other packages needed.
 2. In this folder run: `node server.js`  (or `npm start`)
-3. Open http://localhost:3000 in TWO tabs/windows, click **Connect** in both (same room name).
-4. Verify both tabs show the identical shared key / fingerprint, then chat.
-5. Watch the terminal: the server only sees public keys, IVs and ciphertext.
-6. Click **Send tampered** to see AES-GCM reject a modified message.
+3. ## Run with Python only
+4. 1. open the folder (ECDH-secure-chat) and run Terminal ("CMD") and run command - >python server.py 
+5. Open http://localhost:3000 in TWO tabs/windows, click **Connect** in both (same room name).
+6. Verify both tabs show the identical shared key / fingerprint, then chat.
+7. Watch the terminal: the server only sees public keys, IVs and ciphertext.
+8. Click **Send tampered** to see AES-GCM reject a modified message.
 
 Use `localhost` (a secure context); Web Crypto is disabled on plain http://<LAN-IP>.
 Change port: `PORT=4000 node server.js` (Windows PowerShell: `$env:PORT=4000; node server.js`).
